@@ -2,20 +2,25 @@
 #include <GLFW/glfw3.h>
 
 #include "shader.h"
+#include "linmath.h"
 
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 
 #define W_WIDTH 1280
-#define W_HEIGHT 1280
-#define MAX_PIXELS 10000000
+#define W_HEIGHT 720
+#define MAX_PIXELS 10000
 #define VERTEX_ELEMENTS 20
 #define VERTEX_STRIDE 5
 
-bool should_close = false;
-double mouse_x;
-double mouse_y;
+typedef struct pixel_t pixel_t;
+
+typedef void (*update_f)(pixel_t *);
+
+typedef enum {
+    SAND
+} pixel_type_e;
 
 typedef struct {
     float x;
@@ -26,16 +31,50 @@ typedef struct {
     float r;
     float g;
     float b;
-} color_t;
+} rgb_t;
+
+struct pixel_t {
+    int index;
+    pos_t pos;
+    rgb_t rgb;
+    update_f update;
+    pixel_type_e type;
+};
 
 typedef struct {
     pos_t pos;
-    color_t rgb;
-    int index;
-} pixel_t;
+    rgb_t rgb;
+} pixel_vertex_t;
+
+bool should_close = false;
+double mouse_x;
+double mouse_y;
+float zoom;
+float *pixel_array;
+float *vertex_buffer;
+int pixel_count;
+int w_width, w_height;
+pixel_t **pixels;
+mat4x4 mvp;
 
 void window_close_callback(GLFWwindow *w) {
     should_close = true;
+}
+
+void set_aspect(int width, int height) {
+    float aspect = (float) width / (float) height;
+    glViewport(0, 0, width, height);
+    gluOrtho2D(0.0f, (float) width, (float) height, 0.0f);
+    mat4x4 m, p;
+    mat4x4_identity(m);
+    mat4x4_ortho(p, -aspect * zoom, aspect * zoom, -zoom, zoom, 1, -1);
+    mat4x4_mul(mvp, p, m);
+}
+
+void resize_callback(GLFWwindow *w, int width, int height) {
+    w_width = width;
+    w_height = height;
+    set_aspect(w_width, w_height);
 }
 
 void error_callback(int error, const char *description) {
@@ -70,6 +109,10 @@ void ffree(void *obj, char *v) {
     }
 }
 
+void update(pixel_t *pixel) {
+
+}
+
 void checkm(void *obj) {
     if (obj == NULL) {
         printf("Could not allocate memory for object\n");
@@ -77,11 +120,85 @@ void checkm(void *obj) {
     }
 }
 
-void pixel_add(float x, float y) {
+void repack() {
+    float pixel_index[pixel_count];
+    for (int i = 0; i < pixel_count; i++) {
+        int offset = (int) pixel_index[i] * VERTEX_ELEMENTS;
+        memcpy(vertex_buffer + (i * VERTEX_ELEMENTS),
+               pixel_array + offset, VERTEX_ELEMENTS * sizeof(float));
+    }
 
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    pixel_count * sizeof(float) * VERTEX_ELEMENTS,
+                    vertex_buffer);
 }
 
+void pixel_add(float x, float y, pixel_type_e type) {
+    int i;
+    for (i = 0; i < MAX_PIXELS; i++) {
+        if (pixels[i]->index == -1) { break; }
+    }
+
+    pos_t pos;
+    pos.x = x;
+    pos.y = y;
+
+    rgb_t rgb;
+
+    switch (type) {
+        case SAND:
+            rgb.r = 1.0f;
+            rgb.g = 0.89f;
+            rgb.b = 0.623f;
+            break;
+        default:
+            break;
+    }
+
+    pixels[i]->index = i;
+    pixels[i]->pos = pos;
+    pixels[i]->rgb = rgb;
+    pixels[i]->type = type;
+
+    pixel_vertex_t p[4];
+    float scale = 1.0f;
+    // ll
+    p[0].pos.x = x - scale;
+    p[0].pos.y = y - scale;
+    // lr
+    p[1].pos.x = x + scale;
+    p[1].pos.y = y - scale;
+    // ul
+    p[2].pos.x = x + scale;
+    p[2].pos.y = y + scale;
+    // ul
+    p[3].pos.x = x - scale;
+    p[3].pos.y = y + scale;
+    // color
+    for (int n = 0; n < 4; n++) {
+        p[n].rgb.r = rgb.r;
+        p[n].rgb.g = rgb.g;
+        p[n].rgb.b = rgb.b;
+    }
+
+    int offset = i * VERTEX_ELEMENTS;
+    memcpy(pixel_array + offset, p, VERTEX_ELEMENTS * sizeof(float));
+    pixel_count++;
+    repack();
+}
+
+void pixel_destroy(int index) {
+    pixel_count--;
+    repack();
+}
+
+
 int main() {
+    pixel_count = 0;
+    zoom = 250.0f;
+    w_width = W_WIDTH;
+    w_height = W_HEIGHT;
+
     if (!glfwInit()) {
         printf("Could not initialize GLFW\n");
         return -1;
@@ -90,9 +207,9 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_TRUE);
 
-    GLFWwindow *window = glfwCreateWindow(W_WIDTH, W_HEIGHT, "sand", NULL,
+    GLFWwindow *window = glfwCreateWindow(w_width, w_height, "sand", NULL,
                                           NULL);
     if (!window) {
         glfwTerminate();
@@ -108,35 +225,38 @@ int main() {
     // window
     glfwSetErrorCallback(error_callback);
     glfwSetWindowCloseCallback(window, window_close_callback);
+    glfwSetFramebufferSizeCallback(window, resize_callback);
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);// v-sync
     glewExperimental = GL_TRUE;
     glewInit();
     glDisable(GL_DEPTH_TEST);
+    set_aspect(w_width, w_height);
     // shader
     char *vs = "#version 330 core\n"
                "layout (location = 0) in vec2 in_Position;\n"
                "layout (location = 1) in vec3 in_Color;\n"
+               "uniform mat4 mvp;\n"
                "out vec3 vertexColor;\n"
                "void main()\n"
                "{\n"
-               "    gl_Position = vec4(in_Position, 1.0, 1.0);\n"
+               "    gl_Position = mvp * vec4(in_Position, 0.0f, 1.0f);\n"
                "    vertexColor = in_Color;\n"
-               "}";
+               "}\n\0";
     char *fs = "#version 330 core\n"
                "out vec4 FragColor;\n"
                "in vec3 vertexColor;\n"
                "void main()\n"
                "{\n"
-               "    FragColor = vec4(vertexColor, 1.0);\n"
-               "}";
+               "    FragColor = vec4(vertexColor, 1.0f);\n"
+               "}\n\0";
     GLuint program = shader_program_create_s(vs, fs);
     shader_program_bind_attribute_location(program, 0, "in_Position");
     shader_program_bind_attribute_location(program, 1, "in_Color");
     shader_program_link(program);
+    GLint mvp_uniform = shader_program_get_uniform_location(program, "mvp");
     // gl
     GLuint vao, vbo, ebo = 0;
-    float *vertex_buffer;
     uint32_t *element_buffer;
     // vao
     glGenVertexArrays(1, &vao);
@@ -167,39 +287,53 @@ int main() {
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, MAX_PIXELS * sizeof(uint32_t),
                  element_buffer, GL_STATIC_DRAW);
     // position attribute pointer
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-                          VERTEX_STRIDE * sizeof(float), 0);
+    GLuint position_size = 2;
+    glVertexAttribPointer(0, position_size, GL_FLOAT, GL_FALSE,
+                          VERTEX_STRIDE * sizeof(float), (void *) 0);
     glEnableVertexAttribArray(0);
-    // uv attribute pointer
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+    // rgb attribute pointer
+    GLuint rgb_size = 3;
+    glVertexAttribPointer(1, rgb_size, GL_FLOAT, GL_FALSE,
                           VERTEX_STRIDE * sizeof(float),
-                          (void *) (3 * sizeof(float)));
+                          (void *) (position_size * sizeof(float)));
     glEnableVertexAttribArray(1);
     // pixels
-    pixel_t **pixels = malloc(MAX_PIXELS * sizeof(pixel_t *));
+    pixel_array = malloc(MAX_PIXELS * sizeof(float));
+    pixels = malloc(MAX_PIXELS * sizeof(pixel_t *));
     checkm(pixels);
     for (int x = 0; x < MAX_PIXELS; x++) {
         pixels[x] = malloc(sizeof(pixel_t));
         checkm(pixels[x]);
         pixels[x]->index = -1;
+        pixels[x]->update = update;
     }
 
     // game loop
-    double delta = 0;
-    double start_time = glfwGetTime();
+    double delta;
+    double start_time;
     double previous_time = glfwGetTime();
     int frame_count = 0;
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    pixel_add(0.0f, 0.0f, SAND);
+
     while (!should_close) {
         start_time = glfwGetTime();
         glClear(GL_COLOR_BUFFER_BIT);
-        glClearColor(0.169f, 0.169f, 0.169f, 0.1f);
+        glClearColor(0.169f, 0.169f, 0.169f, 1.0f);
         glUseProgram(program);
+        glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, (const GLfloat *) mvp);
+        set_aspect(w_width, w_height);
 
-        for (int x = 0; x < MAX_PIXELS; x++) {
-            if (pixels[x]->index) {
-
+        //repack();
+        for (int x = 0; x < pixel_count; x++) {
+            if (pixels[x]->index != -1) {
+                pixels[x]->update(pixels[x]);
             }
         }
+
+        glDrawElements(GL_TRIANGLES, pixel_count * 6, GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

@@ -19,7 +19,7 @@ if (MINGW)
         "<CMAKE_RC_COMPILER> <FLAGS> -O coff <DEFINES> -i <SOURCE> -o <OBJECT>")
 endif (MINGW)
 
-add_executable(sand ${RES_FILES} main.c glew.c shader.h shader.c)
+add_executable(sand ${RES_FILES} main.c glew.c shader.h shader.c linmath.h)
 
 # -mwindows
 target_link_libraries(sand glu32 glew32.dll opengl32 glfw3 m)
