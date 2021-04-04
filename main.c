@@ -8,8 +8,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#define W_WIDTH 1280
-#define W_HEIGHT 720
+#define W_WIDTH 1920
+#define W_HEIGHT 1080
 #define MAX_PIXELS 10000
 #define VERTEX_ELEMENTS 20
 #define VERTEX_STRIDE 5
@@ -34,11 +34,15 @@ typedef struct {
 } rgb_t;
 
 struct pixel_t {
-    int index;
     pos_t pos;
     rgb_t rgb;
+    int index;
+    float mass;
+    float velocity;
+    float life_time;
     update_f update;
     pixel_type_e type;
+
 };
 
 typedef struct {
@@ -50,8 +54,8 @@ bool should_close = false;
 double mouse_x;
 double mouse_y;
 float zoom;
-float *pixel_array;
 float *vertex_buffer;
+float gravity;
 int pixel_count;
 int w_width, w_height;
 pixel_t **pixels;
@@ -63,11 +67,10 @@ void window_close_callback(GLFWwindow *w) {
 
 void set_aspect(int width, int height) {
     float aspect = (float) width / (float) height;
-    glViewport(0, 0, width, height);
-    gluOrtho2D(0.0f, (float) width, (float) height, 0.0f);
     mat4x4 m, p;
     mat4x4_identity(m);
-    mat4x4_ortho(p, -aspect * zoom, aspect * zoom, -zoom, zoom, 1, -1);
+    mat4x4_ortho(p, -aspect * zoom, aspect * zoom, zoom, -zoom, 1, -1);
+    mat4x4_translate_in_place(p, -aspect * zoom, -zoom, -1);
     mat4x4_mul(mvp, p, m);
 }
 
@@ -102,7 +105,7 @@ void keyboard_event(GLFWwindow *w, int key, int scancode, int action,
     }
 }
 
-void ffree(void *obj, char *v) {
+void ffree(void *obj) {
     if (obj != NULL) {
         free(obj);
         obj = NULL;
@@ -110,7 +113,18 @@ void ffree(void *obj, char *v) {
 }
 
 void update(pixel_t *pixel) {
+    for (int x = 0; x < w_width; x++) {
+        for (int y = 0; y < w_height; y++) {
 
+        }
+    }
+    switch (pixel->type) {
+        case SAND:
+
+            break;
+        default:
+            break;
+    }
 }
 
 void checkm(void *obj) {
@@ -121,16 +135,17 @@ void checkm(void *obj) {
 }
 
 void repack() {
-    float pixel_index[pixel_count];
-    for (int i = 0; i < pixel_count; i++) {
-        int offset = (int) pixel_index[i] * VERTEX_ELEMENTS;
-        memcpy(vertex_buffer + (i * VERTEX_ELEMENTS),
-               pixel_array + offset, VERTEX_ELEMENTS * sizeof(float));
+    float *pixel_buffer = malloc(pixel_count * VERTEX_ELEMENTS * sizeof(float));
+    for (int i = 0; i < MAX_PIXELS; i++) {
+        if (pixels[i]->index != -1) {
+            int offset = pixels[i]->index * VERTEX_ELEMENTS;
+            memcpy(pixel_buffer + (i * VERTEX_ELEMENTS), vertex_buffer + offset,
+                   VERTEX_ELEMENTS * sizeof(float));
+        }
     }
-
-    glBufferSubData(GL_ARRAY_BUFFER, 0,
-                    pixel_count * sizeof(float) * VERTEX_ELEMENTS,
-                    vertex_buffer);
+    memcpy(vertex_buffer, pixel_buffer,
+           pixel_count * VERTEX_ELEMENTS * sizeof(float));
+    ffree(pixel_buffer);
 }
 
 void pixel_add(float x, float y, pixel_type_e type) {
@@ -161,7 +176,9 @@ void pixel_add(float x, float y, pixel_type_e type) {
     pixels[i]->type = type;
 
     pixel_vertex_t p[4];
-    float scale = 1.0f;
+    float scale = 0.5f;
+    x += scale;
+    y += scale;
     // ll
     p[0].pos.x = x - scale;
     p[0].pos.y = y - scale;
@@ -182,12 +199,16 @@ void pixel_add(float x, float y, pixel_type_e type) {
     }
 
     int offset = i * VERTEX_ELEMENTS;
-    memcpy(pixel_array + offset, p, VERTEX_ELEMENTS * sizeof(float));
+    memcpy(vertex_buffer + offset, p, VERTEX_ELEMENTS * sizeof(float));
     pixel_count++;
     repack();
 }
 
-void pixel_destroy(int index) {
+void pixel_destroy(pixel_t *pixel) {
+    if (pixel == NULL || pixel->index == -1) {
+        return;
+    }
+    pixel->index = -1;
     pixel_count--;
     repack();
 }
@@ -195,7 +216,8 @@ void pixel_destroy(int index) {
 
 int main() {
     pixel_count = 0;
-    zoom = 250.0f;
+    zoom = 100.0f;
+    gravity = 1.0f;
     w_width = W_WIDTH;
     w_height = W_HEIGHT;
 
@@ -207,7 +229,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_RESIZABLE, GL_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
     GLFWwindow *window = glfwCreateWindow(w_width, w_height, "sand", NULL,
                                           NULL);
@@ -298,7 +320,6 @@ int main() {
                           (void *) (position_size * sizeof(float)));
     glEnableVertexAttribArray(1);
     // pixels
-    pixel_array = malloc(MAX_PIXELS * sizeof(float));
     pixels = malloc(MAX_PIXELS * sizeof(pixel_t *));
     checkm(pixels);
     for (int x = 0; x < MAX_PIXELS; x++) {
@@ -317,6 +338,8 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
     pixel_add(0.0f, 0.0f, SAND);
+    //pixel_add(1.0f, 1.0f, SAND);
+    pixel_add(1.0f, 1.0f, SAND);
 
     while (!should_close) {
         start_time = glfwGetTime();
@@ -333,6 +356,9 @@ int main() {
             }
         }
 
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+                        pixel_count * sizeof(float) * VERTEX_ELEMENTS,
+                        vertex_buffer);
         glDrawElements(GL_TRIANGLES, pixel_count * 6, GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
@@ -340,7 +366,8 @@ int main() {
         delta = glfwGetTime() - start_time;
         frame_count++;
         if (start_time - previous_time >= 1.0) {
-            printf("frame: %.2f, fps: %d\n", delta * 1000, frame_count);
+            printf("frame: %.2f, fps: %d, pixels: %d\n", delta * 1000,
+                   frame_count, pixel_count);
             previous_time = start_time;
             frame_count = 0;
         }
