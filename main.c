@@ -342,10 +342,11 @@ void pixel_add(float x, float y, pixel_type_e type) {
     if (pixel_count >= MAX_PIXELS - 10) {
         return;
     }
-    int i;
-    for (i = 0; i < MAX_PIXELS; i++) {
-        if (pixels[i]->index == -1) { break; }
-    }
+    //    int i;
+    //    for (i = 0; i < MAX_PIXELS; i++) {
+    //        if (pixels[i]->index == -1) { break; }
+    //    }
+    int i = pixel_count;
 
     if (x < 1) {
         x = 1;
@@ -391,11 +392,11 @@ void pixel_add(float x, float y, pixel_type_e type) {
 
     switch (type) {
         case SAND:
-            pixels[i]->mass = 10;
+            pixels[i]->mass = 15;
             pixels[i]->friction = 2.0f;
             break;
         case WATER:
-            pixels[i]->mass = 10;
+            pixels[i]->mass = 15;
             pixels[i]->friction = 1.0f;
             break;
         default:
@@ -585,7 +586,7 @@ int main() {
         if (mouse_left_down) {
             float min = -50.0f;
             float max = 50.0f;
-            for (int x = 0; x < 50; x++) {
+            for (int x = 0; x < 500; x++) {
                 pixel_add((float) mouse_x + float_rand(min, max),
                           (float) mouse_y + float_rand(min, max), SAND);
             }
