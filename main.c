@@ -10,7 +10,7 @@
 
 #define W_WIDTH 1920
 #define W_HEIGHT 1080
-#define MAX_PIXELS 10000
+#define MAX_PIXELS (1920 * 1080)
 #define VERTEX_ELEMENTS 20
 #define VERTEX_STRIDE 5
 
@@ -19,8 +19,12 @@ typedef struct pixel_t pixel_t;
 typedef void (*update_f)(pixel_t *);
 
 typedef enum {
-    SAND
+    SAND, WATER
 } pixel_type_e;
+
+typedef enum {
+    N, E, S, W, NE, NW, SE, SW
+} pixel_direction_e;
 
 typedef struct {
     float x;
@@ -38,11 +42,12 @@ struct pixel_t {
     rgb_t rgb;
     int index;
     float mass;
-    float velocity;
+    float friction;
     float life_time;
     update_f update;
     pixel_type_e type;
-
+    int grid_x;
+    int grid_y;
 };
 
 typedef struct {
@@ -51,15 +56,27 @@ typedef struct {
 } pixel_vertex_t;
 
 bool should_close = false;
+bool mouse_left_down = false;
+bool mouse_right_down = false;
 double mouse_x;
 double mouse_y;
 float zoom;
 float *vertex_buffer;
 float gravity;
+float scale;
 int pixel_count;
 int w_width, w_height;
+int grid[W_WIDTH * W_HEIGHT];
 pixel_t **pixels;
 mat4x4 mvp;
+
+
+void pixel_add(float x, float y, pixel_type_e type);
+
+float float_rand(float min, float max) {
+    float s = rand() / (float) RAND_MAX; /* [0, 1.0] */
+    return min + s * (max - min);        /* [min, max] */
+}
 
 void window_close_callback(GLFWwindow *w) {
     should_close = true;
@@ -67,6 +84,8 @@ void window_close_callback(GLFWwindow *w) {
 
 void set_aspect(int width, int height) {
     float aspect = (float) width / (float) height;
+    glViewport(0, 0, W_WIDTH, W_HEIGHT);
+    gluOrtho2D(0.0f, (float) W_WIDTH, (float) W_HEIGHT, 0.0f);
     mat4x4 m, p;
     mat4x4_identity(m);
     mat4x4_ortho(p, -aspect * zoom, aspect * zoom, zoom, -zoom, 1, -1);
@@ -91,11 +110,26 @@ void cursor_position_callback(GLFWwindow *w, double x_pos,
 }
 
 void scroll_callback(GLFWwindow *w, double x_offset, double y_offset) {
+    //    if (y_offset == -1.0f) {
+    //        if (zoom < 100.0f) { zoom += 5.0f; }
+    //    } else {
+    //        if (zoom > 5.0f) { zoom -= 5.0f; }
+    //    }
 }
 
 void mouse_button_callback(GLFWwindow *w, int button, int action, int mods) {
-    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {}
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {}
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+        mouse_right_down = true;
+    }
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
+        mouse_right_down = false;
+    }
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        mouse_left_down = true;
+    }
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+        mouse_left_down = false;
+    }
 }
 
 void keyboard_event(GLFWwindow *w, int key, int scancode, int action,
@@ -112,18 +146,173 @@ void ffree(void *obj) {
     }
 }
 
-void update(pixel_t *pixel) {
-    for (int x = 0; x < w_width; x++) {
-        for (int y = 0; y < w_height; y++) {
-
-        }
+void grid_init() {
+    for (int x = 0; x < W_WIDTH * W_HEIGHT; x++) {
+        grid[x] = -1;
     }
+}
+
+void update(pixel_t *pixel) {
+    bool can_move = false;
+    pixel_direction_e dir = S;
+    int pixel_x = pixel->grid_x;
+    int pixel_y = pixel->grid_y;
+    int grid_position = pixel_x + pixel_y * W_WIDTH;
+    int mass = (int) pixel->mass;
+    int friction = (int) pixel->friction;
+    int distance_s = 0;
+    int distance_w = 0;
+    int distance_e = 0;
+    int distance_se = 0;
+    int distance_sw = 0;
+
+    int dir_e;
+    int dir_se;
+    int dir_s;
+    int dir_sw;
+    int dir_w;
+
+    for (int m = 1; m < mass; m++) {
+        dir_s = pixel_x + (pixel_y + m) * W_WIDTH;
+        if (grid[dir_s] != -1) {
+            break;
+        }
+        distance_s++;
+    }
+    for (int m = 1; m < mass; m++) {
+        dir_w = (pixel_x - m) + pixel_y * W_WIDTH;
+        if (grid[dir_w] != -1) {
+            break;
+        }
+        distance_w++;
+    }
+    for (int m = 1; m < mass; m++) {
+        dir_e = (pixel_x + m) + pixel_y * W_WIDTH;
+        if (grid[dir_e] != -1) {
+            break;
+        }
+        distance_e++;
+    }
+    for (int m = 1; m < friction; m++) {
+        dir_sw = (pixel_x - m) + (pixel_y + m) * W_WIDTH;
+        if (grid[dir_sw] != -1) {
+            break;
+        }
+        distance_sw++;
+    }
+    for (int m = 1; m < friction; m++) {
+        dir_se = (pixel_x + m) + (pixel_y + m) * W_WIDTH;
+        if (grid[dir_se] != -1) {
+            break;
+        }
+        distance_se++;
+    }
+
+    dir_s = (pixel_x) + (pixel_y + 1) * W_WIDTH;
+    dir_sw = (pixel_x - 1) + (pixel_y + 1) * W_WIDTH;
+    dir_se = (pixel_x + 1) + (pixel_y + 1) * W_WIDTH;
+    dir_w = (pixel_x - 1) + pixel_y * W_WIDTH;
+    dir_e = (pixel_x + 1) + pixel_y * W_WIDTH;
+
     switch (pixel->type) {
         case SAND:
+            if (grid[dir_s] == -1) {
+                can_move = true;
+                dir = S;
+            } else if (grid[dir_sw] == -1) {
+                can_move = true;
+                dir = SW;
+            } else if (grid[dir_se] == -1) {
+                can_move = true;
+                dir = SE;
+            }
+            break;
+        case WATER:
+            if (grid[dir_s] == -1) {
+                can_move = true;
+                dir = S;
+            } else if (grid[dir_sw] == -1) {
+                can_move = true;
+                dir = SW;
+            } else if (grid[dir_se] == -1) {
+                can_move = true;
+                dir = SE;
+            } else if (grid[dir_w] == -1) {
+                can_move = true;
+                dir = W;
+            } else if (grid[dir_e] == -1) {
+                can_move = true;
+                dir = E;
+            }
+            break;
+    }
 
+    if (!can_move) {
+        return;
+    }
+
+    switch (dir) {
+        case S:
+            pixel->pos.y += scale * (float) distance_s;
+            pixel->grid_y += (int) (scale * (float) distance_s);
+            break;
+        case W:
+            pixel->pos.x -= scale * (float) distance_w;
+            pixel->grid_x -= (int) (scale * (float) distance_w);
+            break;
+        case E:
+            pixel->pos.x += scale * (float) distance_e;
+            pixel->grid_x += (int) (scale * (float) distance_e);
+            break;
+        case SW:
+            pixel->pos.x -= scale * (float) distance_sw;
+            pixel->pos.y += scale * (float) distance_sw;
+            pixel->grid_x -= (int) (scale * (float) distance_sw);
+            pixel->grid_y += (int) (scale * (float) distance_sw);
+            break;
+        case SE:
+            pixel->pos.x += scale * (float) distance_se;
+            pixel->pos.y += scale * (float) distance_se;
+            pixel->grid_x += (int) (scale * (float) distance_se);
+            pixel->grid_y += (int) (scale * (float) distance_se);
             break;
         default:
             break;
+    }
+
+    if (pixel->pos.y >= W_HEIGHT - 1) {
+        pixel->pos.y = W_HEIGHT - 1;
+        pixel->grid_y = W_HEIGHT - 1;
+    }
+    if (pixel->pos.x >= W_WIDTH - 1) {
+        pixel->pos.x = W_WIDTH - 1;
+        pixel->grid_x = W_WIDTH - 1;
+    }
+
+    pixel_x = (int) pixel->grid_x;
+    pixel_y = (int) pixel->grid_y;
+    int new_position = pixel_x + pixel_y * W_WIDTH;
+    grid[new_position] = pixel->index;
+    grid[grid_position] = -1;
+
+    float v[8];
+    v[0] = pixel->pos.x - scale;
+    v[1] = pixel->pos.y - scale;
+    v[2] = pixel->pos.x + scale;
+    v[3] = pixel->pos.y - scale;
+    v[4] = pixel->pos.x + scale;
+    v[5] = pixel->pos.y + scale;
+    v[6] = pixel->pos.x - scale;
+    v[7] = pixel->pos.y + scale;
+
+    int cnt = 0;
+    int position_size = 2;
+    int offset = pixel->index * VERTEX_ELEMENTS;
+    for (int y = 0; y < VERTEX_ELEMENTS; y += VERTEX_STRIDE) {
+        float m[position_size];
+        for (int x = 0; x < position_size; x++) { m[x] = v[cnt + x]; }
+        memcpy(vertex_buffer + offset + y, m, position_size * sizeof(float));
+        cnt += position_size;
     }
 }
 
@@ -135,6 +324,7 @@ void checkm(void *obj) {
 }
 
 void repack() {
+    return; // not used for now
     float *pixel_buffer = malloc(pixel_count * VERTEX_ELEMENTS * sizeof(float));
     for (int i = 0; i < MAX_PIXELS; i++) {
         if (pixels[i]->index != -1) {
@@ -149,9 +339,25 @@ void repack() {
 }
 
 void pixel_add(float x, float y, pixel_type_e type) {
+    if (pixel_count >= MAX_PIXELS - 10) {
+        return;
+    }
     int i;
     for (i = 0; i < MAX_PIXELS; i++) {
         if (pixels[i]->index == -1) { break; }
+    }
+
+    if (x < 1) {
+        x = 1;
+    }
+    if (x > W_WIDTH) {
+        x = W_WIDTH;
+    }
+    if (y < 1) {
+        y = 1;
+    }
+    if (y > W_HEIGHT - 1) {
+        y = W_HEIGHT - 1;
     }
 
     pos_t pos;
@@ -166,6 +372,10 @@ void pixel_add(float x, float y, pixel_type_e type) {
             rgb.g = 0.89f;
             rgb.b = 0.623f;
             break;
+        case WATER:
+            rgb.r = 0.0f;
+            rgb.g = 0.1f;
+            rgb.b = 1.0f;
         default:
             break;
     }
@@ -174,9 +384,27 @@ void pixel_add(float x, float y, pixel_type_e type) {
     pixels[i]->pos = pos;
     pixels[i]->rgb = rgb;
     pixels[i]->type = type;
+    pixels[i]->mass = 1.0f;
+    pixels[i]->life_time = 0;
+    pixels[i]->grid_x = (int) x;
+    pixels[i]->grid_y = (int) y;
+
+    switch (type) {
+        case SAND:
+            pixels[i]->mass = 10;
+            pixels[i]->friction = 2.0f;
+            break;
+        case WATER:
+            pixels[i]->mass = 10;
+            pixels[i]->friction = 1.0f;
+            break;
+        default:
+            pixels[i]->mass = 1.0f;
+            pixels[i]->friction = 1.0f;
+            break;
+    }
 
     pixel_vertex_t p[4];
-    float scale = 0.5f;
     x += scale;
     y += scale;
     // ll
@@ -200,6 +428,10 @@ void pixel_add(float x, float y, pixel_type_e type) {
 
     int offset = i * VERTEX_ELEMENTS;
     memcpy(vertex_buffer + offset, p, VERTEX_ELEMENTS * sizeof(float));
+    int pixel_x = pixels[i]->grid_x;
+    int pixel_y = pixels[i]->grid_y;
+    int grid_position = pixel_x + pixel_y * W_WIDTH;
+    grid[grid_position] = i;
     pixel_count++;
     repack();
 }
@@ -209,17 +441,22 @@ void pixel_destroy(pixel_t *pixel) {
         return;
     }
     pixel->index = -1;
+    int x = pixel->grid_x;
+    int y = pixel->grid_y;
+    int grid_position = x + y * W_WIDTH;
+    grid[grid_position] = -1;
     pixel_count--;
     repack();
 }
 
-
 int main() {
     pixel_count = 0;
-    zoom = 100.0f;
+    zoom = 540.0f;
+    scale = 1.0f;
     gravity = 1.0f;
     w_width = W_WIDTH;
     w_height = W_HEIGHT;
+    grid_init();
 
     if (!glfwInit()) {
         printf("Could not initialize GLFW\n");
@@ -337,10 +574,6 @@ int main() {
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-    pixel_add(0.0f, 0.0f, SAND);
-    //pixel_add(1.0f, 1.0f, SAND);
-    pixel_add(1.0f, 1.0f, SAND);
-
     while (!should_close) {
         start_time = glfwGetTime();
         glClear(GL_COLOR_BUFFER_BIT);
@@ -349,7 +582,23 @@ int main() {
         glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, (const GLfloat *) mvp);
         set_aspect(w_width, w_height);
 
-        //repack();
+        if (mouse_left_down) {
+            float min = -50.0f;
+            float max = 50.0f;
+            for (int x = 0; x < 50; x++) {
+                pixel_add((float) mouse_x + float_rand(min, max),
+                          (float) mouse_y + float_rand(min, max), SAND);
+            }
+        }
+        if (mouse_right_down) {
+            float min = -50.0f;
+            float max = 50.0f;
+            for (int x = 0; x < 50; x++) {
+                pixel_add((float) mouse_x + float_rand(min, max),
+                          (float) mouse_y + float_rand(min, max), WATER);
+            }
+        }
+
         for (int x = 0; x < pixel_count; x++) {
             if (pixels[x]->index != -1) {
                 pixels[x]->update(pixels[x]);
@@ -366,8 +615,9 @@ int main() {
         delta = glfwGetTime() - start_time;
         frame_count++;
         if (start_time - previous_time >= 1.0) {
-            printf("frame: %.2f, fps: %d, pixels: %d\n", delta * 1000,
-                   frame_count, pixel_count);
+            printf("frame: %.2f, fps: %d, pixels: %d/%d, mouse: %f, %f\n",
+                   delta * 1000, frame_count, pixel_count, MAX_PIXELS, mouse_x,
+                   mouse_y);
             previous_time = start_time;
             frame_count = 0;
         }
